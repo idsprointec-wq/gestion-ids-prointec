@@ -115,9 +115,10 @@
         </div>
     </div>
 
+   <!-- Script de Integración con Google Sheets -->
     <script>
-        // PEGA AQUÍ TU URL DE GOOGLE APPS SCRIPT (Reemplaza la URL de abajo por la tuya)
-        const API_URL = 'https://script.google.com/macros/s/AKfycbw_4fdJBrcXs-_X7c9oarLyhuy6zc4ViHlF04sqbg9lWA9RlewqDHezymxPMYGC3HMn/exec';
+        // REEMPLAZA ESTA URL CON TU URL DE IMPLEMENTACIÓN DE GOOGLE APPS SCRIPT
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw_4fdJBrcXs-_X7c9oarLyhuy6zc4ViHlF04sqbg9lWA9RlewqDHezymxPMYGC3HMn/exec";
 
         let registrosGlobales = [];
         let idSeleccionado = null;
@@ -126,29 +127,50 @@
 
         async function cargarDatos() {
             try {
-                const res = await fetch(API_URL);
+                const res = await fetch(SCRIPT_URL);
                 const data = await res.json();
-                registrosGlobales = data.registros;
-                document.getElementById("countOcupados").innerText = data.stats.ocupados;
-                document.getElementById("countDisponibles").innerText = data.stats.disponibles;
-                renderTabla(registrosGlobales);
+                
+                if (Array.isArray(data)) {
+                    registrosGlobales = data;
+                    actualizarEstadisticas(data);
+                    renderTabla(registrosGlobales);
+                } else {
+                    console.error("Respuesta no válida del servidor:", data);
+                }
             } catch (e) {
                 console.error("Error cargando registros:", e);
             }
         }
 
+        function actualizarEstadisticas(data) {
+            const ocupados = data.filter(r => String(r.estado).toLowerCase() === 'ocupado').length;
+            const disponibles = data.filter(r => String(r.estado).toLowerCase() === 'disponible').length;
+            
+            document.getElementById("countOcupados").innerText = ocupados;
+            document.getElementById("countDisponibles").innerText = disponibles;
+        }
+
         function renderTabla(lista) {
             const tbody = document.getElementById("tablaBody");
             tbody.innerHTML = "";
+            
             lista.forEach(r => {
                 const tr = document.createElement("tr");
                 tr.style.cursor = "pointer";
                 tr.onclick = () => seleccionarFila(r, tr);
+
+                const estadoNormalizado = String(r.estado || '').toLowerCase();
+                const esOcupado = estadoNormalizado === 'ocupado';
+
                 tr.innerHTML = `
                     <td class="text-center fw-bold">${r.id || ''}</td>
                     <td>${r.nombre || ''}</td>
                     <td>${r.apellido || ''}</td>
-                    <td class="text-center"><span class="badge ${r.estado === 'Ocupado' ? 'bg-danger' : 'bg-success'}">${r.estado || ''}</span></td>
+                    <td class="text-center">
+                        <span class="badge ${esOcupado ? 'bg-danger' : 'bg-success'}" style="font-size: 0.7rem;">
+                            ${r.estado || ''}
+                        </span>
+                    </td>
                     <td>${r.observaciones || ''}</td>
                 `;
                 tbody.appendChild(tr);
@@ -158,6 +180,7 @@
         function seleccionarFila(r, tr) {
             document.querySelectorAll("#tablaBody tr").forEach(row => row.classList.remove("table-active"));
             tr.classList.add("table-active");
+
             idSeleccionado = r.id;
             document.getElementById("inputId").value = r.id || '';
             document.getElementById("inputNombre").value = r.nombre || '';
@@ -166,47 +189,67 @@
             document.getElementById("inputObservaciones").value = r.observaciones || '';
         }
 
-        async function enviarAccion(payload) {
-            await fetch(API_URL, {
-                method: 'POST',
-                mode: 'no-cors',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            setTimeout(cargarDatos, 1500);
+        async function enviarPeticion(payload) {
+            try {
+                // Usamos text/plain para evitar que el navegador envíe preflight de CORS
+                const res = await fetch(SCRIPT_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(payload)
+                });
+                return await res.json();
+            } catch (error) {
+                console.error("Error en la petición:", error);
+                return { success: false, message: "Error de conexión con Google Sheets." };
+            }
         }
 
-        function guardarRegistro() {
-            const id = document.getElementById("inputId").value.trim();
-            if (!id) return alert("Ingresa un ID válido.");
-            
-            enviarAccion({
-                action: "guardar",
-                id: id,
+        async function guardarRegistro() {
+            const payload = {
+                accion: "guardar",
+                id: document.getElementById("inputId").value.trim(),
                 nombre: document.getElementById("inputNombre").value.trim(),
                 apellido: document.getElementById("inputApellido").value.trim(),
                 estado: document.getElementById("selectEstado").value,
                 observaciones: document.getElementById("inputObservaciones").value.trim()
-            });
-            alert("Guardando registro...");
+            };
+
+            if (!payload.id) {
+                alert("Por favor ingresa un ID válido.");
+                return;
+            }
+
+            const result = await enviarPeticion(payload);
+            alert(result.message);
             limpiarFormulario();
+            cargarDatos();
         }
 
-        function liberarRegistro() {
-            if (!idSeleccionado) return alert("Selecciona un registro primero.");
-            if (confirm(`¿Liberar ID ${idSeleccionado}?`)) {
-                enviarAccion({ action: "liberar", id: idSeleccionado });
-                alert("Liberando ID...");
+        async function liberarRegistro() {
+            if (!idSeleccionado) {
+                alert("Selecciona un registro de la tabla primero.");
+                return;
+            }
+            if (confirm(`¿Deseas liberar el ID ${idSeleccionado}?`)) {
+                const payload = { accion: "liberar", id: idSeleccionado };
+                const result = await enviarPeticion(payload);
+                alert(result.message);
                 limpiarFormulario();
+                cargarDatos();
             }
         }
 
-        function eliminarRegistro() {
-            if (!idSeleccionado) return alert("Selecciona un registro primero.");
-            if (confirm(`¿Eliminar ID ${idSeleccionado}?`)) {
-                enviarAccion({ action: "eliminar", id: idSeleccionado });
-                alert("Eliminando registro...");
+        async function eliminarRegistro() {
+            if (!idSeleccionado) {
+                alert("Selecciona un registro de la tabla primero.");
+                return;
+            }
+            if (confirm(`¿Estás seguro de eliminar permanentemente el ID ${idSeleccionado}?`)) {
+                const payload = { accion: "eliminar", id: idSeleccionado };
+                const result = await enviarPeticion(payload);
+                alert(result.message);
                 limpiarFormulario();
+                cargarDatos();
             }
         }
 
